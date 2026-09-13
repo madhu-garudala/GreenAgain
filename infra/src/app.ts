@@ -1,0 +1,60 @@
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import * as dynamo from 'aws-cdk-lib/aws-dynamodb';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as sources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secrets from 'aws-cdk-lib/aws-secretsmanager';
+import * as logs from 'aws-cdk-lib/aws-logs';
+
+class GreenAgain extends cdk.Stack {
+  constructor(scope:Construct,id:string,props:cdk.StackProps){super(scope,id,props);
+    cdk.Tags.of(this).add('Project','GreenAgain');
+    const table=new dynamo.Table(this,'State',{partitionKey:{name:'pk',type:dynamo.AttributeType.STRING},sortKey:{name:'sk',type:dynamo.AttributeType.STRING},billingMode:dynamo.BillingMode.PAY_PER_REQUEST,stream:dynamo.StreamViewType.NEW_AND_OLD_IMAGES,timeToLiveAttribute:'ttl',removalPolicy:cdk.RemovalPolicy.RETAIN});
+    table.addGlobalSecondaryIndex({indexName:'list',partitionKey:{name:'gpk',type:dynamo.AttributeType.STRING},sortKey:{name:'gsk',type:dynamo.AttributeType.STRING},projectionType:dynamo.ProjectionType.ALL});
+    const dlq=new sqs.Queue(this,'DeadLetter',{retentionPeriod:cdk.Duration.days(14)});
+    const queue=new sqs.Queue(this,'Work',{visibilityTimeout:cdk.Duration.seconds(3600),deadLetterQueue:{queue:dlq,maxReceiveCount:4},retentionPeriod:cdk.Duration.days(4)});
+    const bucket=new s3.Bucket(this,'Artifacts',{blockPublicAccess:s3.BlockPublicAccess.BLOCK_ALL,encryption:s3.BucketEncryption.S3_MANAGED,enforceSSL:true,lifecycleRules:[{expiration:cdk.Duration.days(14)}],removalPolicy:cdk.RemovalPolicy.RETAIN});
+    const secret=new secrets.Secret(this,'Runtime',{secretName:'greenagain/runtime',description:'Scoped GreenAgain service credentials',generateSecretString:{secretStringTemplate:'{}',generateStringKey:'placeholder'}});
+    const support=new lambda.Function(this,'Support',{functionName:'greenagain-support',runtime:lambda.Runtime.NODEJS_22_X,architecture:lambda.Architecture.ARM_64,handler:'index.supportHandler',code:lambda.Code.fromAsset('dist/support'),timeout:cdk.Duration.seconds(90),memorySize:512,reservedConcurrentExecutions:5,environment:{RELEASE_ID:'r-initial',DEMO_RELEASE_MODE:'healthy',RUNTIME_SECRET_ARN:secret.secretArn},logRetention:logs.RetentionDays.ONE_WEEK});
+    secret.grantRead(support);
+    const alias=new lambda.Alias(this,'Production',{aliasName:'production',version:support.currentVersion});
+    const environment={TABLE_NAME:table.tableName,QUEUE_URL:queue.queueUrl,SUPPORT_FUNCTION:support.functionName,SUPPORT_ALIAS:alias.aliasName,RUNTIME_SECRET_ARN:secret.secretArn,ARTIFACT_BUCKET:bucket.bucketName,GITHUB_REPOSITORY:'madhu-garudala/GreenAgain'};
+    const poller=new lambda.Function(this,'Poller',{runtime:lambda.Runtime.NODEJS_22_X,architecture:lambda.Architecture.ARM_64,handler:'index.handler',code:lambda.Code.fromAsset('dist/poller'),timeout:cdk.Duration.seconds(180),memorySize:512,reservedConcurrentExecutions:1,environment,logRetention:logs.RetentionDays.ONE_WEEK});
+    const dispatcher=new lambda.Function(this,'Dispatcher',{runtime:lambda.Runtime.NODEJS_22_X,architecture:lambda.Architecture.ARM_64,handler:'index.dispatch',code:lambda.Code.fromAsset('dist/poller'),timeout:cdk.Duration.seconds(60),memorySize:256,environment,logRetention:logs.RetentionDays.ONE_WEEK});
+    table.grantReadWriteData(poller);table.grantReadWriteData(dispatcher);queue.grantSendMessages(poller);queue.grantSendMessages(dispatcher);secret.grantRead(poller);support.grantInvoke(poller);alias.grantInvoke(poller);
+    poller.addToRolePolicy(new iam.PolicyStatement({actions:['lambda:GetAlias'],resources:[`${support.functionArn}:production`]}));
+    dispatcher.addEventSource(new sources.DynamoEventSource(table,{startingPosition:lambda.StartingPosition.LATEST,batchSize:10,retryAttempts:5,bisectBatchOnError:true,onFailure:new sources.SqsDlq(dlq),filters:[lambda.FilterCriteria.filter({eventName:['INSERT','MODIFY'],dynamodb:{NewImage:{kind:{S:['outbox']},sent:{BOOL:[false]}}}})]}));
+    new events.Rule(this,'Minute',{schedule:events.Schedule.rate(cdk.Duration.minutes(1)),targets:[new targets.LambdaFunction(poller)]});
+    const workerLambda=new lambda.Function(this,'RecoveryWorker',{runtime:lambda.Runtime.NODEJS_22_X,architecture:lambda.Architecture.ARM_64,handler:'index.handler',code:lambda.Code.fromAsset('dist/worker-lambda'),timeout:cdk.Duration.seconds(600),memorySize:512,reservedConcurrentExecutions:1,environment,logRetention:logs.RetentionDays.ONE_WEEK});
+    table.grantReadWriteData(workerLambda);secret.grantRead(workerLambda);support.grantInvoke(workerLambda);alias.grantInvoke(workerLambda);
+    workerLambda.addToRolePolicy(new iam.PolicyStatement({actions:['lambda:GetAlias','lambda:UpdateAlias'],resources:[`${support.functionArn}:production`]}));
+    workerLambda.addEventSource(new sources.SqsEventSource(queue,{batchSize:1,reportBatchItemFailures:true}));
+    new cdk.CfnOutput(this,'WorkerFunction',{value:workerLambda.functionName});
+    const vpc=new ec2.Vpc(this,'Network',{maxAzs:2,natGateways:0,subnetConfiguration:[{name:'public',subnetType:ec2.SubnetType.PUBLIC,cidrMask:24}]});
+    const cluster=new ecs.Cluster(this,'Cluster',{vpc});
+    const repo=new ecr.Repository(this,'WorkerImage',{imageScanOnPush:true,lifecycleRules:[{maxImageCount:5}],removalPolicy:cdk.RemovalPolicy.RETAIN});
+    const task=new ecs.FargateTaskDefinition(this,'WorkerTask',{cpu:256,memoryLimitMiB:512});
+    task.addContainer('worker',{image:ecs.ContainerImage.fromEcrRepository(repo,'latest'),environment,logging:ecs.LogDrivers.awsLogs({streamPrefix:'greenagain',logRetention:logs.RetentionDays.ONE_WEEK}),readonlyRootFilesystem:true});
+    table.grantReadWriteData(task.taskRole);queue.grantConsumeMessages(task.taskRole);secret.grantRead(task.taskRole);bucket.grantReadWrite(task.taskRole);support.grantInvoke(task.taskRole);alias.grantInvoke(task.taskRole);
+    task.addToTaskRolePolicy(new iam.PolicyStatement({actions:['lambda:GetAlias','lambda:UpdateAlias'],resources:[`${support.functionArn}:production`]}));
+    const service=new ecs.FargateService(this,'Worker',{cluster,taskDefinition:task,desiredCount:0,assignPublicIp:true,vpcSubnets:{subnetType:ec2.SubnetType.PUBLIC},circuitBreaker:{rollback:true}});
+    const githubProvider=new iam.OpenIdConnectProvider(this,'GitHubOIDC',{url:'https://token.actions.githubusercontent.com',clientIds:['sts.amazonaws.com']});
+    const buildRole=new iam.Role(this,'GitHubBuildRole',{assumedBy:new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn,{'StringEquals':{'token.actions.githubusercontent.com:aud':'sts.amazonaws.com','token.actions.githubusercontent.com:sub':'repo:madhu-garudala/GreenAgain:ref:refs/heads/main'}}),maxSessionDuration:cdk.Duration.hours(1)});
+    repo.grantPullPush(buildRole);
+    // Vercel receives a dedicated server credential limited to this table and alias.
+    const webUser=new iam.User(this,'WebIdentity',{userName:'greenagain-vercel'});
+    table.grantReadWriteData(webUser);queue.grantSendMessages(webUser);support.grantInvoke(webUser);alias.grantInvoke(webUser);
+    webUser.addToPolicy(new iam.PolicyStatement({actions:['lambda:GetAlias','lambda:UpdateAlias'],resources:[`${support.functionArn}:production`]}));
+    const outputs:Record<string,string>={TableName:table.tableName,QueueUrl:queue.queueUrl,SupportFunction:support.functionName,SupportAlias:alias.aliasName,SecretArn:secret.secretArn,BucketName:bucket.bucketName,RepositoryUri:repo.repositoryUri,BuildRoleArn:buildRole.roleArn,ClusterName:cluster.clusterName,ServiceName:service.serviceName,WebUserName:webUser.userName,PollerName:poller.functionName};
+    for(const [name,value] of Object.entries(outputs))new cdk.CfnOutput(this,name,{value});
+  }
+}
+const app=new cdk.App();new GreenAgain(app,'GreenAgain',{env:{account:process.env.CDK_DEFAULT_ACCOUNT,region:process.env.AWS_REGION||'us-east-1'}});

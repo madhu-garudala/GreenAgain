@@ -1,11 +1,36 @@
 {
-  "name": "greenagain", "private": true, "version": "0.1.0",
-  "workspaces": ["apps/*", "packages/*", "infra"],
+  "name": "greenagain",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "infra"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev --workspace=@greenagain/web"
   },
-  "devDependencies": {"typescript": "^5.9.3", "tsx": "^4.20.6", "@types/node": "^22.19.0"}
+  "overrides": {
+    "postcss": "8.5.28",
+    "next": { "postcss": "8.5.28" }
+  },
+  "devDependencies": {
+    "@aws-sdk/client-budgets": "^3.1131.0",
+    "@aws-sdk/client-cloudformation": "^3.1131.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1131.0",
+    "@aws-sdk/client-codebuild": "^3.1131.0",
+    "@aws-sdk/client-ecr": "^3.1131.0",
+    "@aws-sdk/client-iam": "^3.1131.0",
+    "@aws-sdk/client-secrets-manager": "^3.1131.0",
+    "@aws-sdk/client-sts": "^3.1131.0",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.28.2",
+    "postcss": "8.5.28",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
 }

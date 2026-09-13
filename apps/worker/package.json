@@ -1,0 +1,1 @@
+{"name":"@greenagain/worker","private":true,"version":"0.1.0","type":"module","scripts":{"typecheck":"tsc --noEmit"},"dependencies":{"@greenagain/core":"0.1.0","@greenagain/integrations":"0.1.0"}}

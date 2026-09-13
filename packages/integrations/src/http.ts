@@ -3,13 +3,27 @@ export class IntegrationError extends Error {
 }
 
 export async function requestJson<T>(url: string, init: RequestInit = {}, fetchFn: typeof fetch = fetch): Promise<T> {
-  let response: Response;
-  try { response = await fetchFn(url, init); } catch (error) { throw new IntegrationError(error instanceof Error ? error.message : 'Network error', 'transient'); }
-  if (!response.ok) {
-    const kind = response.status === 401 || response.status === 403 ? 'auth' : response.status === 404 ? 'not_found' : response.status >= 500 || response.status === 429 ? 'transient' : 'inconclusive';
-    throw new IntegrationError(`Provider request failed (${response.status})`, kind, response.status);
+  const maxAttempts = 3;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetchFn(url, { ...init, signal: controller.signal });
+      if (response.ok) return await response.json() as T;
+      const retryable = response.status === 429 || response.status >= 500;
+      const kind = response.status === 401 || response.status === 403 ? 'auth' : response.status === 404 ? 'not_found' : retryable ? 'transient' : 'inconclusive';
+      if (!retryable || attempt === maxAttempts) throw new IntegrationError(`Provider request failed (${response.status})`, kind, response.status);
+      const retryAfter = Number(response.headers.get('retry-after'));
+      await new Promise(resolve => setTimeout(resolve, Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter * 1000, 1000) : 25 * attempt));
+    } catch (error) {
+      lastError = error;
+      if (error instanceof IntegrationError && (error.kind !== 'transient' || attempt === maxAttempts)) throw error;
+      if (attempt === maxAttempts) throw new IntegrationError(error instanceof Error ? error.message : 'Network error', 'transient');
+      await new Promise(resolve => setTimeout(resolve, 25 * attempt));
+    } finally { clearTimeout(timeout); }
   }
-  return await response.json() as T;
+  throw new IntegrationError(lastError instanceof Error ? lastError.message : 'Network error', 'transient');
 }
 
 export function hmacSha256(secret: string, body: string): Promise<string> {

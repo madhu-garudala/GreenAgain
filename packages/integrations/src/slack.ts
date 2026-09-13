@@ -1,10 +1,10 @@
-import { hmacSha256, requestJson, safeEqual } from './http.js';
+import { hmacSha256, requestJson, safeEqual, IntegrationError } from './http.js';
 export interface SlackMessage { channel: string; ts: string; text?: string; thread_ts?: string; permalink?: string; }
 export interface SlackClientOptions { botToken: string; signingSecret: string; apiBase?: string; fetchFn?: typeof fetch; }
 export class SlackClient {
   private readonly base: string;
   constructor(private readonly options: SlackClientOptions) { this.base = options.apiBase ?? 'https://slack.com/api'; }
-  private async call<T>(method: string, body: Record<string, unknown>): Promise<T> { const result = await requestJson<T & { ok?: boolean; error?: string }>(`${this.base}/${method}`, { method: 'POST', headers: { Authorization: `Bearer ${this.options.botToken}`, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) }, this.options.fetchFn); if (result.ok === false) throw new Error(result.error ?? 'Slack API error'); return result; }
+  private async call<T>(method: string, body: Record<string, unknown>): Promise<T> { const result = await requestJson<T & { ok?: boolean; error?: string }>(`${this.base}/${method}`, { method: 'POST', headers: { Authorization: `Bearer ${this.options.botToken}`, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) }, this.options.fetchFn); if (result.ok === false) throw new IntegrationError(`Slack API error: ${result.error ?? 'unknown_error'}`, 'inconclusive'); return result; }
   async createThread(channel: string, text: string): Promise<SlackMessage> { const r = await this.call<{ ok: true; channel: string; ts: string; message?: { text?: string } }>('chat.postMessage', { channel, text }); return { channel: r.channel, ts: r.ts, text: r.message?.text }; }
   async updateThread(channel: string, ts: string, text: string): Promise<SlackMessage> { const r = await this.call<{ ok: true; channel: string; ts: string }>('chat.update', { channel, ts, text }); return { channel: r.channel, ts: r.ts, text }; }
   async threadPermalink(channel: string, ts: string): Promise<string | undefined> { const r = await this.call<{ ok: true; permalink?: string }>('chat.getPermalink', { channel, message_ts: ts }); return r.permalink; }

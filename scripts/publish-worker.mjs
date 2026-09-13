@@ -1,0 +1,14 @@
+import {readFile,mkdir,writeFile} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
+import {ECRClient,GetAuthorizationTokenCommand} from '@aws-sdk/client-ecr';
+import {ECSClient,UpdateServiceCommand} from '@aws-sdk/client-ecs';
+import {resolve} from 'node:path';
+const o=JSON.parse(await readFile('.env.cloud-outputs.json','utf8')).GreenAgain;
+const crane=process.env.CRANE_PATH||'/Users/madhu/.local/share/greenagain-tools/crane';
+const auth=await new ECRClient({}).send(new GetAuthorizationTokenCommand({}));const entry=auth.authorizationData[0];
+await mkdir('.env.registry',{recursive:true,mode:0o700});
+await writeFile('.env.registry/config.json',JSON.stringify({auths:{[entry.proxyEndpoint]:{auth:entry.authorizationToken}}}),{mode:0o600});
+execFileSync('tar',['-cf','dist/worker-layer.tar','-C','dist/worker','index.js']);
+execFileSync(crane,['mutate','public.ecr.aws/docker/library/node:22-slim','--platform','linux/amd64','--append','dist/worker-layer.tar','--cmd','node,/index.js','--user','1000','--tag',`${o.RepositoryUri}:latest`],{stdio:'inherit',env:{...process.env,DOCKER_CONFIG:resolve('.env.registry')}});
+await new ECSClient({}).send(new UpdateServiceCommand({cluster:o.ClusterName,service:o.ServiceName,desiredCount:1,forceNewDeployment:true}));
+console.log('Published worker image and started one cloud task.');
