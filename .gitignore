@@ -1,0 +1,13 @@
+.env
+.env.local
+*.swp
+*.swo
+node_modules/
+.next/
+dist/
+cdk.out/
+.vercel/
+coverage/
+*.tsbuildinfo
+.env.*
+!.env.example

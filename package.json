@@ -1,0 +1,11 @@
+{
+  "name": "greenagain", "private": true, "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*", "infra"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run dev --workspace=@greenagain/web"
+  },
+  "devDependencies": {"typescript": "^5.9.3", "tsx": "^4.20.6", "@types/node": "^22.19.0"}
+}
