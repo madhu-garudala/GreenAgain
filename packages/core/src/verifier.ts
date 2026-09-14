@@ -92,12 +92,14 @@ export async function verify(releases: Releases, expectedVersion: string, qualif
     if (unknown) { const result = checkCase(unknown, UNKNOWN_CASE, expectedVersion); if (result.traceId) { traceIds.push(result.traceId); try { await awaitTrace(langsmith,result.traceId); await langsmith.createFeedback({ run_id: result.traceId, key: 'greenagain_verification_unknown', score: result.pass ? 1 : 0 }); } catch (error) { unavailable = true; reasons.push(`unknown order: LangSmith unavailable (${error instanceof Error ? error.message : 'unknown error'})`); } } else unavailable = true; unknownPassed = result.pass; if (!result.pass) reasons.push(`unknown order: ${result.reason}`); }
     for (let i = 0; i < 3; i++) {
       if (i) { const configured = Number(process.env.GREENAGAIN_FRESH_SPACING_MS ?? 1000); await new Promise(resolve => setTimeout(resolve, Number.isFinite(configured) ? Math.max(0, Math.min(configured, 10_000)) : 1000)); }
-      const fresh = await releases.invoke('My headphones arrived damaged', 'ord-1001', qualifier, 'evaluation');
+      let fresh: SupportOutput;
+      try { fresh = await releases.invoke('My headphones arrived damaged', 'ord-1001', qualifier, 'evaluation'); }
+      catch (error) { unavailable = true; reasons.push(`fresh-${i + 1}: transport/invocation unavailable (${error instanceof Error ? error.message : 'unknown error'})`); continue; }
       const result = checkCase(fresh, CASES[0], expectedVersion);
       if (result.traceId) traceIds.push(result.traceId);
       if (!result.traceId) unavailable = true;
       if (result.pass) freshPassed++; else reasons.push(`fresh-${i + 1}: ${result.reason}`);
-      if (result.traceId) { await awaitTrace(langsmith,result.traceId); await langsmith.createFeedback({ run_id: result.traceId, key: 'greenagain_verification_fresh', score: result.pass ? 1 : 0 }); }
+      if (result.traceId) { try { await awaitTrace(langsmith,result.traceId); await langsmith.createFeedback({ run_id: result.traceId, key: 'greenagain_verification_fresh', score: result.pass ? 1 : 0 }); } catch (error) { unavailable = true; reasons.push(`fresh-${i + 1}: LangSmith unavailable (${error instanceof Error ? error.message : 'unknown error'})`); } }
     }
   } catch (error) {
     reasons.push(`verification unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);

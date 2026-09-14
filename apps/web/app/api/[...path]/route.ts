@@ -81,6 +81,7 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   try {
     const db = store();
     if (path[0] === 'integrations') { const integrations = await db.get<unknown[]>('INTEGRATIONS') || []; return json({ integrations }); }
+    if (path[0] === 'events') { const incidents = await db.list(); const grouped = await Promise.all(incidents.map(async i => (await db.events(i.id)).map(e => ({ ...sanitizeEvent(e), incidentId: i.id })))); return json({ events: grouped.flat().sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))).slice(0, 100) }); }
     if (path[0] === 'incidents' && !path[1]) return json({ incidents: (await db.list()).map(publicIncident) });
     if (path[0] === 'incidents' && path[1]) { const incident = await db.get<Incident>(`INCIDENT#${path[1]}`); if (!incident) return fail(404, 'Incident not found'); if (path[2] === 'events') return json({ events: (await db.events(path[1])).map(sanitizeEvent) }); return json({ incident: publicIncident(incident) }); }
     return fail(404, 'Not found');
