@@ -1,6 +1,6 @@
 export type IncidentStatus = 'DETECTED'|'INVESTIGATING'|'ACTION_PROPOSED'|'AWAITING_APPROVAL'|'REMEDIATING'|'VERIFYING'|'FIX_READY'|'RESOLVED'|'ESCALATED';
 export type Incident = { id: string; title?: string; application?: string; environment?: string; status: IncidentStatus; category?: string; createdAt?: string; updatedAt?: string; summary?: string; release?: string; severity?: string; evidenceCount?: number; verification?: { status?: string; checkedAt?: string; detail?: string } };
-export type Event = { id: string; type?: string; message?: string; createdAt?: string; actor?: string; status?: string; link?: string };
+export type Event = { id: string; type?: string; message?: string; createdAt?: string; actor?: string; status?: string; link?: string; incidentId?: string };
 export type Integration = { name: string; status: 'connected'|'stale'|'degraded'|'unconfigured'; checkedAt?: string; detail?: string };
 export type IncidentDto = Omit<Incident, 'status'> & { status?: string; state?: string };
 export type IncidentListResponse = Incident[] | { incidents?: IncidentDto[] };

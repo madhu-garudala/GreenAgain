@@ -12,15 +12,19 @@ async function main(){await loadRuntime();const queue=new SQSClient({}),store=ne
       if(!await store.lease('support-agent/production',owner))continue;
       const heartbeat=setInterval(()=>{void Promise.all([store.lease('support-agent/production',owner),queue.send(new ChangeMessageVisibilityCommand({QueueUrl:url,ReceiptHandle:receipt,VisibilityTimeout:120}))]).catch(()=>{console.error('Heartbeat failed; stopping worker to avoid competing execution');process.exit(1);});},30000);
       try{const job=JSON.parse(message.Body) as {id:string;kind:string;incidentId?:string;scenario?:string};
-        if(job.kind==='incident'&&job.incidentId)await investigate(store,job.incidentId);
+        if(job.kind==='incident'&&job.incidentId){await investigate(store,job.incidentId);const active=await store.get<{id:string}>('ACTIVE_SCENARIO');if(active)await store.releaseLease('scenario',active.id).catch(()=>{});}
         else if(job.kind==='scenario'||job.kind==='reset'){
           if(!await store.get(`JOB_DONE#${job.id}`)){
             const releases=new Releases(),baseline=await store.get<Release>('BASELINE');if(!baseline)throw new Error('Baseline verification required before demo controls');
             const target=job.kind==='reset'?baseline:await store.get<Release>(job.scenario==='prompt_regression'?'SCENARIO#prompt':'SCENARIO#tool');if(!target)throw new Error('Requested release has not been published');
-            const current=await releases.current();await releases.update(target.version,current.revision);
+            const current=await releases.current();
+            await store.put(`JOB_INTENT#${job.id}`,{...job,fromVersion:current.version,revision:current.revision,targetVersion:target.version});
+            await releases.update(target.version,current.revision);
             await store.put(`JOB_DONE#${job.id}`,{at:new Date().toISOString(),version:target.version});
+            await store.put('ACTIVE_SCENARIO',{id:job.id,startedAt:new Date().toISOString(),version:target.version});
             await store.put(`AUDIT#${job.id}`,{...job,at:new Date().toISOString(),fromVersion:current.version,targetVersion:target.version});
             if(job.kind==='scenario')await releases.invoke('My headphones arrived damaged. Can I get a replacement?','ord-1001',releases.alias,'traffic');
+            else await store.releaseLease('scenario',job.id).catch(()=>{});
           }
         }else throw new Error('Unsupported job');
         await queue.send(new DeleteMessageCommand({QueueUrl:url,ReceiptHandle:receipt}));
