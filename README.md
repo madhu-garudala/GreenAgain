@@ -8,7 +8,7 @@ GreenAgain is an incident-response system for production AI applications. It use
 
 **[Detailed implementation plan](plan.md)** · **[Repository](https://github.com/madhu-garudala/GreenAgain)**
 
-**Continuing on another machine? Read [handoff_plan.md](handoff_plan.md) first.** It records the latest interrupted source changes, known defects, actual test outcomes, credential-transfer requirements, and prioritized next steps. It supersedes older build-status notes below; a monitored-agent scaffold and further UI edits were added after this README was initially written.
+> This project is a work in progress: a monitored-agent scaffold and dashboard UI exist, and the remaining milestones are tracked in [plan.md](plan.md).
 
 Live dashboard: not deployed yet.
 
@@ -284,8 +284,6 @@ GITHUB_WEBHOOK_SECRET=...
 GITHUB_OWNER=...
 GITHUB_REPO=GreenAgain
 ```
-
-The current local provisioning configuration used `Vercel_API_KEY`; normalize that name or explicitly support it in provisioning code. No secret values are included here.
 
 Separate monitored/control LangSmith projects, operator allowlists/session secrets, and generated AWS resource names are specified in the plan and will be finalized during implementation. Runtime workers should receive only the secrets they need. Generated-code test tasks must not receive operating or deployment credentials.
 
